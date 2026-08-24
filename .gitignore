@@ -1,0 +1,12 @@
+build*/
+outputs/
+logs/
+raw/
+data/
+*.root
+*.csv
+*.out
+*.err
+*.tar*
+__pycache__/
+.ipynb_checkpoints/
