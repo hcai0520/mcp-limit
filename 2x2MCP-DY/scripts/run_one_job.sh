@@ -48,5 +48,6 @@ fi
     --write-spectra "${WRITE_SPECTRA:-accepted}" \
     --spectra-prescale "${SPECTRA_PRESCALE:-1}" \
     --job-id "$job_id" \
+    ${HARD_ONLY:+--hard-only} \
     --batch \
     > "logs/jobs/job_${job_id}.log" 2>&1

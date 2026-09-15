@@ -38,18 +38,18 @@ class Sigma2qqbar2GammaMcpPair final : public Pythia8::Sigma2Process {
 
     void sigmaKin() override {
         const double mass2 = parameters_.mass * parameters_.mass;
-        physical_ = sH > 4.0 * mass2;
+        const double beta2 = 1.0 - 4.0 * mass2 / sH;
+        physical_ = beta2 > 0.0;
         if (!physical_) {
             sigma0_ = 0.0;
             return;
         }
 
-        const double massRatio = mass2 / sH;
-        beta_ = std::sqrt(1.0 - 4.0 * massRatio);
-        cosTheta_ = std::clamp((tH - uH) / sH, -1.0, 1.0);
-        longitudinal_ = 4.0 * massRatio;
+        beta_ = std::sqrt(beta2);
+        cosTheta_ = std::clamp((tH - uH) / (beta_ * sH), -1.0, 1.0);
+        longitudinal_ = 4.0 * mass2 / sH;
         sigma0_ = M_PI * alpEM * alpEM / sH2
-                * parameters_.epsilon * parameters_.epsilon * beta_;
+                * parameters_.epsilon * parameters_.epsilon;
     }
 
     double sigmaHat() override {
@@ -92,6 +92,100 @@ class Sigma2qqbar2GammaMcpPair final : public Pythia8::Sigma2Process {
     double longitudinal_ = 0.0;
 };
 
+class PhaseSpace2to2McpPair final : public Pythia8::PhaseSpace2to2tauyz {
+  public:
+    bool finalKin() override {
+        int id3 = sigmaProcessPtr->id(3);
+        int id4 = sigmaProcessPtr->id(4);
+
+        if (idMass[3] == 0) {
+            m3 = particleDataPtr->m0(id3);
+            s3 = m3 * m3;
+        }
+        if (idMass[4] == 0) {
+            m4 = particleDataPtr->m0(id4);
+            s4 = m4 * m4;
+        }
+
+        if (sigmaProcessPtr->swappedTU()) {
+            std::swap(tH, uH);
+            z = -z;
+        }
+
+        if (mHat <= m3 + m4) return false;
+
+        p2Abs = 0.25
+              * (Pythia8::pow2(sH - s3 - s4) - 4.0 * s3 * s4) / sH;
+        pAbs = Pythia8::sqrtpos(p2Abs);
+
+        mH[1] = 0.0;
+        mH[2] = 0.0;
+        mH[3] = m3;
+        mH[4] = m4;
+
+        if (hasPointGammaA && beamBPtr->isHadron()
+            && !flag("PDF:beamB2gamma")) {
+            double eCM1 = 0.5
+                * (s + Pythia8::pow2(mA) - Pythia8::pow2(mB)) / eCM;
+            double eCM2 = 0.25 * x2H * s / eCM1;
+
+            pH[1] = Pythia8::Vec4(0.0, 0.0, eCM1, eCM1);
+            pH[2] = Pythia8::Vec4(0.0, 0.0, -eCM2, eCM2);
+
+        } else if (hasPointGammaB && beamAPtr->isHadron()
+                   && !flag("PDF:beamA2gamma")) {
+            double eCM2 = 0.5
+                * (s - Pythia8::pow2(mA) + Pythia8::pow2(mB)) / eCM;
+            double eCM1 = 0.25 * x1H * s / eCM2;
+
+            pH[1] = Pythia8::Vec4(0.0, 0.0, eCM1, eCM1);
+            pH[2] = Pythia8::Vec4(0.0, 0.0, -eCM2, eCM2);
+
+        } else if (((beamAPtr->isLepton() && beamBPtr->isHadron())
+                    || (beamBPtr->isLepton() && beamAPtr->isHadron()))
+                   && !(flag("PDF:beamA2gamma")
+                        || flag("PDF:beamB2gamma"))) {
+            mH[1] = mA;
+            mH[2] = mB;
+
+            double pzAcm = 0.5 * Pythia8::sqrtpos(
+                (eCM + mA + mB) * (eCM - mA - mB)
+              * (eCM - mA + mB) * (eCM + mA - mB)) / eCM;
+            double eAcm = std::sqrt(mH[1] * mH[1] + pzAcm * pzAcm);
+            double pzBcm = -pzAcm;
+            double eBcm = std::sqrt(mH[2] * mH[2] + pzBcm * pzBcm);
+
+            pH[1] = Pythia8::Vec4(
+                0.0, 0.0, pzAcm * x1H, eAcm * x1H);
+            pH[2] = Pythia8::Vec4(
+                0.0, 0.0, pzBcm * x2H, eBcm * x2H);
+
+        } else {
+            pH[1] = Pythia8::Vec4(
+                0.0, 0.0, 0.5 * eCM * x1H, 0.5 * eCM * x1H);
+            pH[2] = Pythia8::Vec4(
+                0.0, 0.0, -0.5 * eCM * x2H, 0.5 * eCM * x2H);
+        }
+
+        pH[3] = Pythia8::Vec4(
+            0.0, 0.0, pAbs, 0.5 * (sH + s3 - s4) / mHat);
+        pH[4] = Pythia8::Vec4(
+            0.0, 0.0, -pAbs, 0.5 * (sH + s4 - s3) / mHat);
+
+        theta = std::acos(z);
+        phi = 2.0 * M_PI * rndmPtr->flat();
+        betaZ = (x1H - x2H) / (x1H + x2H);
+
+        pH[3].rot(theta, phi);
+        pH[4].rot(theta, phi);
+        pH[3].bst(0.0, 0.0, betaZ);
+        pH[4].bst(0.0, 0.0, betaZ);
+
+        pTH = pAbs * std::sin(theta);
+        return true;
+    }
+};
+
 std::shared_ptr<Pythia8::SigmaProcess> makeDyProcess(
     const DyParameters& parameters) {
     return std::make_shared<Sigma2qqbar2GammaMcpPair>(parameters);
@@ -104,7 +198,7 @@ struct Options {
     long long nEvents = 10000;
     double mass = 0.1;
     double epsilon = 0.01;
-    double mHatMin = -1.0;
+    double mHatMin = 2.0;
     GeometryId geometry = GeometryId::TwoByTwo;
     SpectraMode spectraMode = SpectraMode::All;
     int spectraPrescale = 1;
@@ -114,7 +208,7 @@ struct Options {
     std::string beamConfig = "beam.config";
     std::string momentumConfig = "momentum.config";
     std::string productionConfig;
-    std::string pdfSet = "5";
+    std::string pdfSet = "LHAPDF6:MSTW2008nnlo68cl";
     bool hardOnly = false;
     bool quiet = false;
 };
@@ -229,7 +323,6 @@ void printUsage(const char* program) {
         << " <seed> <nThreads> <nEvents> <mcpMassGeV> <geometry>"
         << " <emitterName> <productionMode> <outputFile> [options]\n"
         << "  --epsilon VALUE     Generation charge (default: 0.01)\n"
-        << "  --mhat-min GEV       Comparison cut; default is 2 * MCP mass\n"
         << "  --beam-config FILE   Default: beam.config\n"
         << "  --momentum-config F  Default: momentum.config\n"
         << "  --production-config FILE\n"
@@ -276,7 +369,6 @@ Options parseOptions(int argc, char** argv) {
         };
 
         if (key == "--epsilon") options.epsilon = std::stod(value());
-        else if (key == "--mhat-min") options.mHatMin = std::stod(value());
         else if (key == "--beam-config") options.beamConfig = value();
         else if (key == "--momentum-config") options.momentumConfig = value();
         else if (key == "--production-config") options.productionConfig = value();
@@ -317,11 +409,7 @@ Options parseOptions(int argc, char** argv) {
         throw std::runtime_error("threads, events, mass, epsilon and prescale must be positive");
     }
 
-    const double threshold = 2.0 * options.mass;
-    if (options.mHatMin < 0.0) options.mHatMin = threshold;
-    if (options.mHatMin < threshold) {
-        throw std::runtime_error("mhat-min cannot be below 2 * MCP mass");
-    }
+    options.mHatMin = 2.0;
     return options;
 }
 
@@ -344,7 +432,10 @@ void configurePythia(Pythia8::Pythia& pythia, const Options& options, int seed) 
     pythia.readString("SoftQCD:all = off");
     pythia.readString("HardQCD:all = off");
     pythia.readString(setting("PhaseSpace:mHatMin", std::to_string(options.mHatMin)));
-    pythia.settings.parm("PhaseSpace:pTHatMinDiverge", 0.0, true);
+    // The photon-mediated s-channel matrix element is finite at pTHat = 0.
+    // Remove PYTHIA's generic technical cut so the Born phase space matches
+    // MadGraph with only m(chibar chi) > 2 GeV.
+    pythia.settings.forceParm("PhaseSpace:pTHatMinDiverge", 0.0);
 
     pythia.readString(setting("PDF:pSet", options.pdfSet));
 
@@ -372,7 +463,9 @@ void configurePythia(Pythia8::Pythia& pythia, const Options& options, int seed) 
         pythia.readString("HadronLevel:all = off");
     }
 
-    pythia.setSigmaPtr(makeDyProcess({options.mass, options.epsilon}));
+    pythia.setSigmaPtr(
+        makeDyProcess({options.mass, options.epsilon}),
+        std::make_shared<PhaseSpace2to2McpPair>());
 }
 
 bool keepSpectrum(const Options& options, long long index, bool accepted) {
@@ -413,10 +506,14 @@ ThreadResult runThread(
         );
         ++result.nEvents;
 
+        const Pythia8::Event& record = options.hardOnly
+            ? pythia.process
+            : pythia.event;
+
         std::vector<int> mcpIndices;
-        for (int i = 0; i < pythia.event.size(); ++i) {
-            if (pythia.event[i].isFinal()
-                && std::abs(pythia.event[i].id()) == kMcpPdg) {
+        for (int i = 0; i < record.size(); ++i) {
+            if (record[i].isFinal()
+                && std::abs(record[i].id()) == kMcpPdg) {
                 mcpIndices.push_back(i);
             }
         }
@@ -427,11 +524,11 @@ ThreadResult runThread(
         }
 
         ++result.nPairs;
-        const Pythia8::Vec4 pair = pythia.event[mcpIndices[0]].p()
-                                + pythia.event[mcpIndices[1]].p();
+        const Pythia8::Vec4 pair = record[mcpIndices[0]].p()
+                                + record[mcpIndices[1]].p();
 
         for (int index : mcpIndices) {
-            const Pythia8::Particle& particle = pythia.event[index];
+            const Pythia8::Particle& particle = record[index];
             ++result.nMcp;
             const Projection projection = project(
                 particle.px(), particle.py(), particle.pz(), options.geometry
@@ -476,10 +573,10 @@ ThreadResult runThread(
             row.pair_mass_GeV = pair.mCalc();
             row.pair_pT_GeV = pair.pT();
 
-            const int mother = motherIndex(pythia.event, index);
+            const int mother = motherIndex(record, index);
             row.mother_index = mother;
             if (mother >= 0) {
-                const auto& parent = pythia.event[mother];
+                const auto& parent = record[mother];
                 row.mother_pdg = parent.id();
                 row.mother_status = parent.status();
                 row.mother_is_primary_like = parent.mother1() == 1
@@ -574,6 +671,7 @@ void writeOutput(const Options& options, const std::vector<ThreadResult>& result
     double mcp_mass = options.mass;
     double epsilon_gen = options.epsilon;
     double mhat_min_GeV = options.mHatMin;
+    double pthat_min_diverge_GeV = 0.0;
     double emitter_per_event = 0.0;
     double parent_yield_per_event = 0.0;
     double acceptance_fraction = 0.0;
@@ -608,6 +706,8 @@ void writeOutput(const Options& options, const std::vector<ThreadResult>& result
     BRANCH("mcp_mass", &mcp_mass, "mcp_mass/D");
     BRANCH("epsilon_gen", &epsilon_gen, "epsilon_gen/D");
     BRANCH("mhat_min_GeV", &mhat_min_GeV, "mhat_min_GeV/D");
+    BRANCH("pthat_min_diverge_GeV", &pthat_min_diverge_GeV,
+           "pthat_min_diverge_GeV/D");
     BRANCH("emitter_pdg", &emitter_pdg, "emitter_pdg/I");
     BRANCH("parent_pdg", &parent_pdg, "parent_pdg/I");
     BRANCH("emitter_name", emitter_name, "emitter_name/C");
@@ -767,6 +867,8 @@ int main(int argc, char** argv) {
         std::cout << std::setprecision(12)
                   << "model=dirac_fermion_photon_only\n"
                   << "production_mode=drell_yan\n"
+                  << "mhat_min_GeV=" << options.mHatMin << '\n'
+                  << "pthat_min_diverge_GeV=0\n"
                   << "events=" << generated << '\n'
                   << "pairs=" << pairs << '\n'
                   << "mcp=" << mcps << '\n'
